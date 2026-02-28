@@ -1,0 +1,151 @@
+name: Deploy schoolstatic to AWS
+
+on:
+  push:
+    branches:
+      - main
+      - dev
+  pull_request:
+    branches: [main, dev]
+
+env:
+  AWS_REGION: us-east-1
+
+# Cancel in-progress runs on the same branch
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # JOB 1 — Validate (runs on every push & PR)
+  validate:
+    name: Validate Static Files
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Check required files exist
+        run: |
+          echo "Checking project structure..."
+          for f in index.html css/ js/ images/ fonts/; do
+            if [ ! -e "$f" ]; then
+              echo "Missing: $f "
+              exit 1
+            fi
+          done
+          echo "All required files found "
+
+      - name: Check HTML syntax
+        run: |
+          sudo apt-get install -y tidy > /dev/null 2>&1
+          tidy -errors -quiet -utf8 index.html || true
+          echo "HTML validation complete "
+
+      - name: List files to be deployed
+        run: |
+          echo "Files staged for deployment:"
+          find . -not -path './.git/*' -not -path './.github/*' -type f | sort
+
+  # JOB 2 — Deploy to Dev (dev branch only)
+  deploy-dev:
+    name: Deploy → Dev
+    runs-on: ubuntu-latest
+    needs: validate
+    if: github.ref == 'refs/heads/dev' && github.event_name == 'push'
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Sync CSS/JS/fonts/images to S3 — long cache
+        run: |
+          aws s3 sync . s3://${{ secrets.S3_BUCKET }} \
+            --delete \
+            --exclude ".git/*" \
+            --exclude ".github/*" \
+            --exclude "*.html" \
+            --cache-control "public, max-age=31536000, immutable"
+
+      - name: Sync HTML to S3 — no cache
+        run: |
+          aws s3 sync . s3://${{ secrets.S3_BUCKET }} \
+            --exclude "*" \
+            --include "*.html" \
+            --cache-control "no-cache, no-store, must-revalidate"
+
+      - name: Invalidate CloudFront cache
+        run: |
+          aws cloudfront create-invalidation \
+            --distribution-id ${{ secrets.CLOUDFRONT_DISTRIBUTION_ID }} \
+            --paths "/*"
+
+      - name: Done
+        run: echo "✅ Dev deployment complete!"
+
+  # JOB 3 — Deploy to Production (main branch only)
+
+  deploy-prod:
+    name: Deploy → Production
+    runs-on: ubuntu-latest
+    needs: validate
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    environment:
+      name: production
+      url: https://yourdomain.com
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Sync CSS/JS/fonts/images to S3 — long cache
+        run: |
+          aws s3 sync . s3://${{ secrets.S3_BUCKET }} \
+            --delete \
+            --exclude ".git/*" \
+            --exclude ".github/*" \
+            --exclude "*.html" \
+            --cache-control "public, max-age=31536000, immutable"
+
+      - name: Sync HTML to S3 — no cache
+        run: |
+          aws s3 sync . s3://${{ secrets.S3_BUCKET }} \
+            --exclude "*" \
+            --include "*.html" \
+            --cache-control "no-cache, no-store, must-revalidate"
+
+      - name: Invalidate CloudFront cache
+        run: |
+          INVALIDATION_ID=$(aws cloudfront create-invalidation \
+            --distribution-id ${{ secrets.CLOUDFRONT_DISTRIBUTION_ID }} \
+            --paths "/*" \
+            --query 'Invalidation.Id' \
+            --output text)
+          echo "CloudFront Invalidation ID: $INVALIDATION_ID"
+
+      - name: Smoke test — verify site is live
+        run: |
+          echo "Waiting 15s for CloudFront propagation..."
+          sleep 15
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" https://yourdomain.com)
+          echo "HTTP Response: $STATUS"
+          if [ "$STATUS" != "200" ]; then
+            echo "Smoke test FAILED — got HTTP $STATUS "
+            exit 1
+          fi
+          echo "Smoke test PASSED — site is live!"
