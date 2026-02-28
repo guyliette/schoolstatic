@@ -45,7 +45,7 @@ jobs:
 
       - name: List files to be deployed
         run: |
-          echo "Files staged for deployment:"
+          echo "Files stage for deployment:"
           find . -not -path './.git/*' -not -path './.github/*' -type f | sort
 
   # JOB 2 — Deploy to Dev (dev branch only)
