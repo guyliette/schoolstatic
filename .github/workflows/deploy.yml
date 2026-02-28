@@ -89,7 +89,7 @@ jobs:
             --paths "/*"
 
       - name: Done
-        run: echo "✅ Dev deployment complete!"
+        run: echo " Dev deployment complete!"
 
   # JOB 3 — Deploy to Production (main branch only)
 
@@ -136,13 +136,13 @@ jobs:
             --paths "/*" \
             --query 'Invalidation.Id' \
             --output text)
-          echo "CloudFront Invalidation ID: $INVALIDATION_ID"
+          echo "CloudFront Invalidation ID: $INVALIDATION_ID" 
 
       - name: Smoke test — verify site is live
         run: |
           echo "Waiting 15s for CloudFront propagation..."
           sleep 15
-          STATUS=$(curl -s -o /dev/null -w "%{http_code}" https://yourdomain.com)
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" gigistyle.online)
           echo "HTTP Response: $STATUS"
           if [ "$STATUS" != "200" ]; then
             echo "Smoke test FAILED — got HTTP $STATUS "
