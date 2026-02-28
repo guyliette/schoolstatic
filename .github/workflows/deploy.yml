@@ -35,7 +35,7 @@ jobs:
               exit 1
             fi
           done
-          echo "All required files found "
+          echo "All require files found "
 
       - name: Check HTML syntax
         run: |
